@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cicd-app
+  labels:
+    app: cicd-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cicd-app
+  template:
+    metadata:
+      labels:
+        app: cicd-app
+    spec:
+      containers:
+        - name: cicd-app
+          image: image-registry.openshift-image-registry.svc:5000/sn-labs-mdfidahussai/cicd-app:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PORT
+              value: "8000"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cicd-app-service
+  labels:
+    app: cicd-app
+spec:
+  selector:
+    app: cicd-app
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000

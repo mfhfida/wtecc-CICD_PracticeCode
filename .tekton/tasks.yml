@@ -1,29 +1,139 @@
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
+  name: echo
+spec:
+  params:
+    - name: message
+      description: The message to echo
+      type: string
+  steps:
+    - name: echo-message
+      image: alpine:3
+      command: [/bin/echo]
+      args: ["$(params.message)"]
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
   name: cleanup
 spec:
+  description: This task will clean up a workspace by deleting all of the files.
+  workspaces:
+    - name: source
   steps:
     - name: remove
-      image: bitnami/kubectl
+      image: alpine:3
+      env:
+        - name: WORKSPACE_SOURCE_PATH
+          value: $(workspaces.source.path)
+      workingDir: $(workspaces.source.path)
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: 0
       script: |
-        #!/usr/bin/env bash
-        rm -rf /workspace/output/*
-        rm -rf /workspace/output/.[!.]*
+        #!/usr/bin/env sh
+        set -eu
+        echo "Removing all files from ${WORKSPACE_SOURCE_PATH} ..."
+        if [ -d "${WORKSPACE_SOURCE_PATH}" ] ; then
+          rm -rf "${WORKSPACE_SOURCE_PATH:?}"/*
+          rm -rf "${WORKSPACE_SOURCE_PATH}"/.[!.]*
+          rm -rf "${WORKSPACE_SOURCE_PATH}"/..?*
+        fi
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: flake8
+spec:
+  params:
+    - name: image
+      description: The Python image to use
+      type: string
+      default: "python:3.9-slim"
+    - name: args
+      description: Arguments to pass to flake8
+      type: array
+      default: []
+  workspaces:
+    - name: source
+  steps:
+    - name: lint
+      image: $(params.image)
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "***** Installing flake8 *****"
+        python -m pip install --upgrade pip
+        pip install flake8
+        echo "***** Running flake8 *****"
+        flake8 service --count --max-complexity=10 --max-line-length=127 --statistics
+
 ---
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
   name: nose
 spec:
+  params:
+    - name: args
+      description: Arguments to pass to nose
+      type: string
+      default: "-v"
   workspaces:
     - name: source
   steps:
-    - name: nose-test
+    - name: nosetests
       image: python:3.9-slim
       workingDir: $(workspaces.source.path)
       script: |
-        #!/usr/bin/env bash
-        pip install -r requirements.txt
-        pip install nose
-        nosetests -v
+        #!/bin/bash
+        set -e
+        echo "***** Environment *****"
+        python --version
+        pwd
+        echo "***** Installing dependencies *****"
+        python -m pip install --upgrade pip wheel
+        pip install
+cat > .tekton/deployment.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cicd-app
+  labels:
+    app: cicd-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cicd-app
+  template:
+    metadata:
+      labels:
+        app: cicd-app
+    spec:
+      containers:
+        - name: cicd-app
+          image: image-registry.openshift-image-registry.svc:5000/sn-labs-mdfidahussai/cicd-app:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PORT
+              value: "8000"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cicd-app-service
+  labels:
+    app: cicd-app
+spec:
+  selector:
+    app: cicd-app
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
